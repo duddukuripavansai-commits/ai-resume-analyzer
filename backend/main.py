@@ -1,8 +1,28 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
+from dotenv import load_dotenv
+from openai import OpenAI
 import io
-import re
+import os
+import json
+
+from dotenv import load_dotenv
+from openai import OpenAI
+import os
+
+load_dotenv()
+
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    raise Exception(
+        "OPENAI_API_KEY not found. Make sure you have a .env file in the backend folder."
+    )
+
+print("✅ API Key Loaded:", api_key[:10] + "...")
+
+client = OpenAI(api_key=api_key)
 
 app = FastAPI()
 
@@ -14,16 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-stop_words = {
-    "the", "and", "to", "a", "of", "in", "with", "for", "or", "as",
-    "this", "our", "you", "will", "at", "on", "by", "is", "are", "be",
-    "an", "we", "your", "from", "that", "it", "into", "across"
-}
-
-def clean_words(text):
-    words = re.findall(r"\b[a-zA-Z][a-zA-Z0-9+#.-]*\b", text.lower())
-    return set(word for word in words if word not in stop_words and len(word) > 2)
-
 @app.get("/")
 def home():
     return {"message": "AI Resume Analyzer backend is running"}
@@ -33,29 +43,54 @@ async def analyze_resume(
     file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
-    contents = await file.read()
-
     if not file.filename.lower().endswith(".pdf"):
         return {"error": "Only PDF files are supported right now"}
 
+    contents = await file.read()
     pdf_reader = PdfReader(io.BytesIO(contents))
 
     resume_text = ""
     for page in pdf_reader.pages:
         resume_text += page.extract_text() or ""
 
-    jd_words = clean_words(job_description)
-    resume_words = clean_words(resume_text)
+    prompt = f"""
+Analyze this resume against the job description.
 
-    matched_keywords = sorted(list(jd_words.intersection(resume_words)))
-    missing_keywords = sorted(list(jd_words.difference(resume_words)))
+Return ONLY valid JSON with these fields:
+{{
+  "match_score": number,
+  "overall_summary": "string",
+  "strong_matches": ["string"],
+  "missing_skills": ["string"],
+  "resume_improvements": ["string"],
+  "interview_questions": ["string"]
+}}
 
-    match_score = round((len(matched_keywords) / max(len(jd_words), 1)) * 100, 2)
+Resume:
+{resume_text[:6000]}
 
-    return {
-        "filename": file.filename,
-        "match_score": match_score,
-        "matched_keywords": matched_keywords[:40],
-        "missing_keywords": missing_keywords[:40],
-        "resume_preview": resume_text[:500]
-    }
+Job Description:
+{job_description[:4000]}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert ATS resume analyst."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+        )
+
+        ai_text = response.choices[0].message.content
+        ai_result = json.loads(ai_text)
+
+        return {
+            "filename": file.filename,
+            "resume_preview": resume_text[:500],
+            **ai_result
+        }
+
+    except Exception as e:
+        return {"error": str(e)}

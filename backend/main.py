@@ -1,9 +1,18 @@
 from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
 import io
 import re
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 stop_words = {
     "the", "and", "to", "a", "of", "in", "with", "for", "or", "as",
@@ -15,8 +24,6 @@ def clean_words(text):
     words = re.findall(r"\b[a-zA-Z][a-zA-Z0-9+#.-]*\b", text.lower())
     return set(word for word in words if word not in stop_words and len(word) > 2)
 
-app = FastAPI()
-
 @app.get("/")
 def home():
     return {"message": "AI Resume Analyzer backend is running"}
@@ -27,6 +34,10 @@ async def analyze_resume(
     job_description: str = Form(...)
 ):
     contents = await file.read()
+
+    if not file.filename.lower().endswith(".pdf"):
+        return {"error": "Only PDF files are supported right now"}
+
     pdf_reader = PdfReader(io.BytesIO(contents))
 
     resume_text = ""

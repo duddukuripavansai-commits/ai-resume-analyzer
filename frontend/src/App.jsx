@@ -1,26 +1,35 @@
 import { useState } from "react";
 import axios from "axios";
 
-function App() {
+export default function App() {
   const [file, setFile] = useState(null);
   const [jobDescription, setJobDescription] = useState("");
   const [result, setResult] = useState(null);
+  const [coverLetter, setCoverLetter] = useState("");
   const [loading, setLoading] = useState(false);
+  const [coverLoading, setCoverLoading] = useState(false);
 
-  const analyzeResume = async () => {
-    if (!file) {
-      alert("Upload PDF resume");
-      return;
-    }
-
-    if (!jobDescription.trim()) {
-      alert("Paste job description");
-      return;
-    }
-
+  const buildFormData = () => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("job_description", jobDescription);
+    return formData;
+  };
+
+  const validateInputs = () => {
+    if (!file) {
+      alert("Please upload a PDF resume.");
+      return false;
+    }
+    if (!jobDescription.trim()) {
+      alert("Please paste the job description.");
+      return false;
+    }
+    return true;
+  };
+
+  const analyzeResume = async () => {
+    if (!validateInputs()) return;
 
     try {
       setLoading(true);
@@ -28,103 +37,148 @@ function App() {
 
       const response = await axios.post(
         "http://127.0.0.1:8000/analyze-resume",
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+        buildFormData()
       );
 
       setResult(response.data);
-    } catch (error) {
-      console.error(error);
-      setResult({
-        error: "Something went wrong. Check backend terminal.",
-      });
+    } catch (err) {
+      alert("Backend error while analyzing resume.");
+      console.log(err);
     } finally {
       setLoading(false);
     }
   };
 
+  const generateCoverLetter = async () => {
+    if (!validateInputs()) return;
+
+    try {
+      setCoverLoading(true);
+      setCoverLetter("");
+
+      const response = await axios.post(
+        "http://127.0.0.1:8000/generate-cover-letter",
+        buildFormData()
+      );
+
+      if (response.data.error) {
+        alert(response.data.error);
+      } else {
+        setCoverLetter(response.data.cover_letter);
+      }
+    } catch (err) {
+      alert("Backend error while generating cover letter.");
+      console.log(err);
+    } finally {
+      setCoverLoading(false);
+    }
+  };
+
   return (
-    <div style={{ maxWidth: "900px", margin: "40px auto", fontFamily: "Arial" }}>
-      <h1>🤖 AI Resume Analyzer</h1>
-      <p>Upload your resume and paste a job description.</p>
+    <div className="min-h-screen bg-gray-100 p-10">
+      <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-lg p-8">
+        <h1 className="text-4xl font-bold text-center mb-8">
+          🤖 AI Resume Analyzer
+        </h1>
 
-      <h3>Resume PDF</h3>
-      <input
-        type="file"
-        accept=".pdf"
-        onChange={(e) => setFile(e.target.files[0])}
-      />
+        <div className="mb-5">
+          <label className="font-semibold">Upload Resume (PDF)</label>
+          <input
+            className="border w-full mt-2 p-3 rounded-lg"
+            type="file"
+            accept=".pdf"
+            onChange={(e) => setFile(e.target.files[0])}
+          />
+        </div>
 
-      <h3>Job Description</h3>
-      <textarea
-        rows="10"
-        style={{ width: "100%", padding: "10px" }}
-        value={jobDescription}
-        onChange={(e) => setJobDescription(e.target.value)}
-        placeholder="Paste job description here..."
-      />
+        <div>
+          <label className="font-semibold">Job Description</label>
+          <textarea
+            rows="12"
+            className="border w-full mt-2 p-3 rounded-lg"
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            placeholder="Paste job description here..."
+          />
+        </div>
 
-      <br />
-      <br />
+        <div className="grid grid-cols-2 gap-4 mt-6">
+          <button
+            onClick={analyzeResume}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg text-lg"
+          >
+            {loading ? "Analyzing..." : "Analyze Resume"}
+          </button>
 
-      <button
-        onClick={analyzeResume}
-        disabled={loading}
-        style={{ padding: "12px 30px", fontSize: "18px", cursor: "pointer" }}
-      >
-        {loading ? "Analyzing..." : "Analyze Resume"}
-      </button>
+          <button
+            onClick={generateCoverLetter}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded-lg text-lg"
+          >
+            {coverLoading ? "Generating..." : "Generate Cover Letter"}
+          </button>
+        </div>
 
-      {result && (
-        <div style={{ marginTop: "30px", padding: "20px", border: "1px solid #ccc" }}>
-          {result.error ? (
-            <h3 style={{ color: "red" }}>{result.error}</h3>
-          ) : (
-            <>
-              <h2>AI Analysis Result</h2>
+        {result && (
+          <div className="mt-10">
+            <div className="bg-green-100 rounded-lg p-5">
+              <h2 className="text-2xl font-bold">AI Match Score</h2>
+              <h1 className="text-5xl text-green-700 mt-3">
+                {result.match_score}%
+              </h1>
+            </div>
 
-              <h3>Match Score: {result.match_score}%</h3>
+            <div className="grid grid-cols-2 gap-5 mt-6">
+              <div className="bg-white border rounded-lg p-5 shadow">
+                <h2 className="text-xl font-bold mb-3">Strong Matches</h2>
+                <ul className="list-disc pl-5">
+                  {result.strong_matches?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
 
-              <h3>Overall Summary</h3>
-              <p>{result.overall_summary}</p>
+              <div className="bg-white border rounded-lg p-5 shadow">
+                <h2 className="text-xl font-bold mb-3">Missing Skills</h2>
+                <ul className="list-disc pl-5">
+                  {result.missing_skills?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
 
-              <h3>Strong Matches</h3>
-              <ul>
-                {result.strong_matches?.map((item, index) => (
-                  <li key={index}>{item}</li>
-                ))}
-              </ul>
+            <div className="bg-white shadow rounded-lg p-5 mt-6">
+              <h2 className="text-xl font-bold">Overall Summary</h2>
+              <p className="mt-3">{result.overall_summary}</p>
+            </div>
 
-              <h3>Missing Skills</h3>
-              <ul>
-                {result.missing_skills?.map((item, index) => (
-                  <li key={index}>{item}</li>
-                ))}
-              </ul>
-
-              <h3>Resume Improvements</h3>
-              <ul>
+            <div className="bg-white shadow rounded-lg p-5 mt-6">
+              <h2 className="text-xl font-bold">Resume Improvements</h2>
+              <ul className="list-disc pl-5 mt-3">
                 {result.resume_improvements?.map((item, index) => (
                   <li key={index}>{item}</li>
                 ))}
               </ul>
+            </div>
 
-              <h3>Interview Questions</h3>
-              <ul>
+            <div className="bg-white shadow rounded-lg p-5 mt-6">
+              <h2 className="text-xl font-bold">Interview Questions</h2>
+              <ul className="list-disc pl-5 mt-3">
                 {result.interview_questions?.map((item, index) => (
                   <li key={index}>{item}</li>
                 ))}
               </ul>
-            </>
-          )}
-        </div>
-      )}
+            </div>
+          </div>
+        )}
+
+        {coverLetter && (
+          <div className="bg-white border rounded-lg p-5 shadow mt-8">
+            <h2 className="text-2xl font-bold mb-4">Generated Cover Letter</h2>
+            <pre className="whitespace-pre-wrap font-sans">{coverLetter}</pre>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
-export default App;

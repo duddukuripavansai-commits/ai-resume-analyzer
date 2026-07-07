@@ -2,6 +2,8 @@ import { useState } from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
 
+const API_BASE_URL = "https://ai-resume-analyzer-efrt.onrender.com";
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [jobDescription, setJobDescription] = useState("");
@@ -33,31 +35,80 @@ export default function App() {
 
   const analyzeResume = async () => {
     if (!validateInputs()) return;
-    setLoading(true);
-    const response = await axios.post("http://127.0.0.1:8000/analyze-resume", buildFormData());
-    setResult(response.data);
-    setLoading(false);
+
+    try {
+      setLoading(true);
+      setResult(null);
+
+      const response = await axios.post(
+        `${API_BASE_URL}/analyze-resume`,
+        buildFormData()
+      );
+
+      setResult(response.data);
+    } catch (error) {
+      console.error(error);
+      setResult({
+        error:
+          error.response?.data?.error ||
+          "Backend error while analyzing resume.",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const generateCoverLetter = async () => {
     if (!validateInputs()) return;
-    setCoverLoading(true);
-    const response = await axios.post("http://127.0.0.1:8000/generate-cover-letter", buildFormData());
-    setCoverLetter(response.data.cover_letter);
-    setCoverLoading(false);
+
+    try {
+      setCoverLoading(true);
+      setCoverLetter("");
+
+      const response = await axios.post(
+        `${API_BASE_URL}/generate-cover-letter`,
+        buildFormData()
+      );
+
+      if (response.data.error) {
+        setCoverLetter(`Error: ${response.data.error}`);
+      } else {
+        setCoverLetter(response.data.cover_letter);
+      }
+    } catch (error) {
+      console.error(error);
+      setCoverLetter("Error: Backend error while generating cover letter.");
+    } finally {
+      setCoverLoading(false);
+    }
   };
 
   const rewriteResume = async () => {
     if (!validateInputs()) return;
-    setRewriteLoading(true);
-    const response = await axios.post("http://127.0.0.1:8000/rewrite-resume", buildFormData());
-    setRewrite(response.data);
-    setRewriteLoading(false);
+
+    try {
+      setRewriteLoading(true);
+      setRewrite(null);
+
+      const response = await axios.post(
+        `${API_BASE_URL}/rewrite-resume`,
+        buildFormData()
+      );
+
+      setRewrite(response.data);
+    } catch (error) {
+      console.error(error);
+      setRewrite({
+        error: "Backend error while rewriting resume.",
+      });
+    } finally {
+      setRewriteLoading(false);
+    }
   };
 
   const downloadReport = () => {
-    if (!result) {
-      alert("Please analyze resume first.");
+    if (!result || result.error) {
+      alert("Please generate a valid analysis first.");
       return;
     }
 
@@ -68,10 +119,12 @@ export default function App() {
       doc.setFontSize(14);
       doc.text(title, 10, y);
       y += 8;
+
       doc.setFontSize(10);
       const lines = doc.splitTextToSize(content || "", 180);
       doc.text(lines, 10, y);
       y += lines.length * 6 + 8;
+
       if (y > 270) {
         doc.addPage();
         y = 15;
@@ -89,9 +142,11 @@ export default function App() {
     addText("Resume Improvements", result.resume_improvements?.map((i) => `• ${i}`).join("\n"));
     addText("Interview Questions", result.interview_questions?.map((i) => `• ${i}`).join("\n"));
 
-    if (coverLetter) addText("Generated Cover Letter", coverLetter);
+    if (coverLetter && !coverLetter.startsWith("Error:")) {
+      addText("Generated Cover Letter", coverLetter);
+    }
 
-    if (rewrite) {
+    if (rewrite && !rewrite.error) {
       addText("Optimized Summary", rewrite.optimized_summary);
       addText("Optimized Skills", rewrite.optimized_skills?.map((i) => `• ${i}`).join("\n"));
       addText("Optimized Bullets", rewrite.optimized_bullets?.map((i) => `• ${i}`).join("\n"));
@@ -104,7 +159,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-100 p-10">
       <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-lg p-8">
-        <h1 className="text-4xl font-bold text-center mb-8">🤖 AI Resume Analyzer</h1>
+        <h1 className="text-4xl font-bold text-center mb-8">
+          🤖 AI Resume Analyzer
+        </h1>
 
         <label className="font-semibold">Upload Resume (PDF)</label>
         <input
@@ -143,31 +200,46 @@ export default function App() {
 
         {result && (
           <div className="mt-10">
-            <div className="bg-green-100 rounded-lg p-5">
-              <h2 className="text-2xl font-bold">AI Match Score</h2>
-              <h1 className="text-5xl text-green-700 mt-3">{result.match_score}%</h1>
-            </div>
-
-            <div className="grid grid-cols-2 gap-5 mt-6">
-              <div className="bg-white border rounded-lg p-5 shadow">
-                <h2 className="text-xl font-bold mb-3">Strong Matches</h2>
-                <ul className="list-disc pl-5">
-                  {result.strong_matches?.map((item, index) => <li key={index}>{item}</li>)}
-                </ul>
+            {result.error ? (
+              <div className="bg-red-100 text-red-700 rounded-lg p-5">
+                <h2 className="text-xl font-bold">Backend Error</h2>
+                <p>{result.error}</p>
               </div>
+            ) : (
+              <>
+                <div className="bg-green-100 rounded-lg p-5">
+                  <h2 className="text-2xl font-bold">AI Match Score</h2>
+                  <h1 className="text-5xl text-green-700 mt-3">
+                    {result.match_score}%
+                  </h1>
+                </div>
 
-              <div className="bg-white border rounded-lg p-5 shadow">
-                <h2 className="text-xl font-bold mb-3">Missing Skills</h2>
-                <ul className="list-disc pl-5">
-                  {result.missing_skills?.map((item, index) => <li key={index}>{item}</li>)}
-                </ul>
-              </div>
-            </div>
+                <div className="grid grid-cols-2 gap-5 mt-6">
+                  <div className="bg-white border rounded-lg p-5 shadow">
+                    <h2 className="text-xl font-bold mb-3">Strong Matches</h2>
+                    <ul className="list-disc pl-5">
+                      {result.strong_matches?.map((item, index) => (
+                        <li key={index}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
 
-            <div className="bg-white shadow rounded-lg p-5 mt-6">
-              <h2 className="text-xl font-bold">Overall Summary</h2>
-              <p className="mt-3">{result.overall_summary}</p>
-            </div>
+                  <div className="bg-white border rounded-lg p-5 shadow">
+                    <h2 className="text-xl font-bold mb-3">Missing Skills</h2>
+                    <ul className="list-disc pl-5">
+                      {result.missing_skills?.map((item, index) => (
+                        <li key={index}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="bg-white shadow rounded-lg p-5 mt-6">
+                  <h2 className="text-xl font-bold">Overall Summary</h2>
+                  <p className="mt-3">{result.overall_summary}</p>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -180,25 +252,37 @@ export default function App() {
 
         {rewrite && (
           <div className="bg-white border rounded-lg p-5 shadow mt-8">
-            <h2 className="text-2xl font-bold mb-4">Optimized Resume Content</h2>
+            {rewrite.error ? (
+              <p className="text-red-700 font-bold">{rewrite.error}</p>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold mb-4">Optimized Resume Content</h2>
 
-            <h3 className="font-bold">Optimized Summary</h3>
-            <p className="mb-4">{rewrite.optimized_summary}</p>
+                <h3 className="font-bold">Optimized Summary</h3>
+                <p className="mb-4">{rewrite.optimized_summary}</p>
 
-            <h3 className="font-bold">Optimized Skills</h3>
-            <ul className="list-disc pl-5 mb-4">
-              {rewrite.optimized_skills?.map((item, index) => <li key={index}>{item}</li>)}
-            </ul>
+                <h3 className="font-bold">Optimized Skills</h3>
+                <ul className="list-disc pl-5 mb-4">
+                  {rewrite.optimized_skills?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
 
-            <h3 className="font-bold">Optimized Bullets</h3>
-            <ul className="list-disc pl-5 mb-4">
-              {rewrite.optimized_bullets?.map((item, index) => <li key={index}>{item}</li>)}
-            </ul>
+                <h3 className="font-bold">Optimized Bullets</h3>
+                <ul className="list-disc pl-5 mb-4">
+                  {rewrite.optimized_bullets?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
 
-            <h3 className="font-bold">ATS Keywords to Add</h3>
-            <ul className="list-disc pl-5">
-              {rewrite.ats_keywords_to_add?.map((item, index) => <li key={index}>{item}</li>)}
-            </ul>
+                <h3 className="font-bold">ATS Keywords to Add</h3>
+                <ul className="list-disc pl-5">
+                  {rewrite.ats_keywords_to_add?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
 
-const API_BASE_URL = "https://ai-resume-analyzer-efrt.onrender.com";
+const API_BASE_URL = "http://127.0.0.1:8000";
 
 export default function App() {
   const [file, setFile] = useState(null);
@@ -13,11 +13,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [coverLoading, setCoverLoading] = useState(false);
   const [rewriteLoading, setRewriteLoading] = useState(false);
+  const [tailoredLoading, setTailoredLoading] = useState(false);
 
   const buildFormData = () => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("job_description", jobDescription);
+    formData.append("mode", "ATS Optimized");
     return formData;
   };
 
@@ -35,24 +37,16 @@ export default function App() {
 
   const analyzeResume = async () => {
     if (!validateInputs()) return;
-
     try {
       setLoading(true);
       setResult(null);
-
       const response = await axios.post(
         `${API_BASE_URL}/analyze-resume`,
         buildFormData()
       );
-
       setResult(response.data);
     } catch (error) {
-      console.error(error);
-      setResult({
-        error:
-          error.response?.data?.error ||
-          "Backend error while analyzing resume.",
-      });
+      setResult({ error: "Backend error while analyzing resume." });
     } finally {
       setLoading(false);
     }
@@ -60,24 +54,16 @@ export default function App() {
 
   const generateCoverLetter = async () => {
     if (!validateInputs()) return;
-
     try {
       setCoverLoading(true);
       setCoverLetter("");
-
       const response = await axios.post(
         `${API_BASE_URL}/generate-cover-letter`,
         buildFormData()
       );
-
-      if (response.data.error) {
-        setCoverLetter(`Error: ${response.data.error}`);
-      } else {
-        setCoverLetter(response.data.cover_letter);
-      }
+      setCoverLetter(response.data.cover_letter || response.data.error);
     } catch (error) {
-      console.error(error);
-      setCoverLetter("Error: Backend error while generating cover letter.");
+      setCoverLetter("Backend error while generating cover letter.");
     } finally {
       setCoverLoading(false);
     }
@@ -85,24 +71,53 @@ export default function App() {
 
   const rewriteResume = async () => {
     if (!validateInputs()) return;
-
     try {
       setRewriteLoading(true);
       setRewrite(null);
-
       const response = await axios.post(
         `${API_BASE_URL}/rewrite-resume`,
         buildFormData()
       );
-
       setRewrite(response.data);
     } catch (error) {
-      console.error(error);
-      setRewrite({
-        error: "Backend error while rewriting resume.",
-      });
+      setRewrite({ error: "Backend error while rewriting resume." });
     } finally {
       setRewriteLoading(false);
+    }
+  };
+
+  const generateTailoredResume = async () => {
+    if (!validateInputs()) return;
+
+    try {
+      setTailoredLoading(true);
+
+      const response = await axios.post(
+        `${API_BASE_URL}/generate-tailored-resume`,
+        buildFormData(),
+        {
+          responseType: "blob",
+        }
+      );
+
+      const blob = new Blob([response.data], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = "ATS_Tailored_Resume.docx";
+      document.body.appendChild(link);
+      link.click();
+
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert("Failed to generate tailored resume. Check backend logs.");
+    } finally {
+      setTailoredLoading(false);
     }
   };
 
@@ -119,7 +134,6 @@ export default function App() {
       doc.setFontSize(14);
       doc.text(title, 10, y);
       y += 8;
-
       doc.setFontSize(10);
       const lines = doc.splitTextToSize(content || "", 180);
       doc.text(lines, 10, y);
@@ -137,28 +151,19 @@ export default function App() {
 
     addText("Match Score", `${result.match_score}%`);
     addText("Overall Summary", result.overall_summary);
-    addText("Strong Matches", result.strong_matches?.map((i) => `• ${i}`).join("\n"));
-    addText("Missing Skills", result.missing_skills?.map((i) => `• ${i}`).join("\n"));
-    addText("Resume Improvements", result.resume_improvements?.map((i) => `• ${i}`).join("\n"));
-    addText("Interview Questions", result.interview_questions?.map((i) => `• ${i}`).join("\n"));
+    addText("Strong Matches", result.strong_matches?.join("\n"));
+    addText("Missing Skills", result.missing_skills?.join("\n"));
+    addText("Resume Improvements", result.resume_improvements?.join("\n"));
+    addText("Interview Questions", result.interview_questions?.join("\n"));
 
-    if (coverLetter && !coverLetter.startsWith("Error:")) {
-      addText("Generated Cover Letter", coverLetter);
-    }
-
-    if (rewrite && !rewrite.error) {
-      addText("Optimized Summary", rewrite.optimized_summary);
-      addText("Optimized Skills", rewrite.optimized_skills?.map((i) => `• ${i}`).join("\n"));
-      addText("Optimized Bullets", rewrite.optimized_bullets?.map((i) => `• ${i}`).join("\n"));
-      addText("ATS Keywords to Add", rewrite.ats_keywords_to_add?.map((i) => `• ${i}`).join("\n"));
-    }
+    if (coverLetter) addText("Generated Cover Letter", coverLetter);
 
     doc.save("AI_Resume_Analysis_Report.pdf");
   };
 
   return (
     <div className="min-h-screen bg-gray-100 p-10">
-      <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-lg p-8">
+      <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-lg p-8">
         <h1 className="text-4xl font-bold text-center mb-8">
           🤖 AI Resume Analyzer
         </h1>
@@ -180,20 +185,24 @@ export default function App() {
           placeholder="Paste job description here..."
         />
 
-        <div className="grid grid-cols-4 gap-4 mt-6">
-          <button onClick={analyzeResume} className="bg-blue-600 text-white px-6 py-3 rounded-lg">
+        <div className="grid grid-cols-5 gap-4 mt-6">
+          <button onClick={analyzeResume} className="bg-blue-600 text-white px-4 py-3 rounded-lg">
             {loading ? "Analyzing..." : "Analyze"}
           </button>
 
-          <button onClick={generateCoverLetter} className="bg-purple-600 text-white px-6 py-3 rounded-lg">
+          <button onClick={generateCoverLetter} className="bg-purple-600 text-white px-4 py-3 rounded-lg">
             {coverLoading ? "Generating..." : "Cover Letter"}
           </button>
 
-          <button onClick={rewriteResume} className="bg-orange-600 text-white px-6 py-3 rounded-lg">
-            {rewriteLoading ? "Rewriting..." : "Rewrite Resume"}
+          <button onClick={rewriteResume} className="bg-orange-600 text-white px-4 py-3 rounded-lg">
+            {rewriteLoading ? "Rewriting..." : "Rewrite"}
           </button>
 
-          <button onClick={downloadReport} className="bg-green-600 text-white px-6 py-3 rounded-lg">
+          <button onClick={generateTailoredResume} className="bg-black text-white px-4 py-3 rounded-lg">
+            {tailoredLoading ? "Creating..." : "New Resume"}
+          </button>
+
+          <button onClick={downloadReport} className="bg-green-600 text-white px-4 py-3 rounded-lg">
             Download PDF
           </button>
         </div>
@@ -256,7 +265,9 @@ export default function App() {
               <p className="text-red-700 font-bold">{rewrite.error}</p>
             ) : (
               <>
-                <h2 className="text-2xl font-bold mb-4">Optimized Resume Content</h2>
+                <h2 className="text-2xl font-bold mb-4">
+                  Optimized Resume Content
+                </h2>
 
                 <h3 className="font-bold">Optimized Summary</h3>
                 <p className="mb-4">{rewrite.optimized_summary}</p>

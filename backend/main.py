@@ -1,8 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from openai import OpenAI
+from docx import Document
 import io
 import os
 import json
@@ -26,6 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def extract_pdf_text(file_bytes):
     pdf_reader = PdfReader(io.BytesIO(file_bytes))
     text = ""
@@ -33,9 +36,25 @@ def extract_pdf_text(file_bytes):
         text += page.extract_text() or ""
     return text
 
+
+def call_openai_json(prompt, system_message, temperature=0.3):
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=temperature,
+    )
+
+    ai_text = response.choices[0].message.content
+    return json.loads(ai_text)
+
+
 @app.get("/")
 def home():
     return {"message": "AI Resume Analyzer backend is running"}
+
 
 @app.post("/analyze-resume")
 async def analyze_resume(
@@ -69,17 +88,11 @@ Job Description:
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert ATS resume analyst."},
-                {"role": "user", "content": prompt},
-            ],
+        ai_result = call_openai_json(
+            prompt,
+            "You are an expert ATS resume analyst.",
             temperature=0.2,
         )
-
-        ai_text = response.choices[0].message.content
-        ai_result = json.loads(ai_text)
 
         return {
             "filename": file.filename,
@@ -89,6 +102,7 @@ Job Description:
 
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.post("/generate-cover-letter")
 async def generate_cover_letter(
@@ -128,15 +142,14 @@ Job Description:
             temperature=0.4,
         )
 
-        cover_letter = response.choices[0].message.content
-
         return {
             "filename": file.filename,
-            "cover_letter": cover_letter
+            "cover_letter": response.choices[0].message.content
         }
 
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.post("/rewrite-resume")
 async def rewrite_resume(
@@ -176,17 +189,11 @@ Job Description:
 """
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert resume writer and ATS optimization specialist."},
-                {"role": "user", "content": prompt},
-            ],
+        rewrite_result = call_openai_json(
+            prompt,
+            "You are an expert resume writer and ATS optimization specialist.",
             temperature=0.3,
         )
-
-        ai_text = response.choices[0].message.content
-        rewrite_result = json.loads(ai_text)
 
         return {
             "filename": file.filename,
@@ -195,3 +202,141 @@ Job Description:
 
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.post("/generate-tailored-resume")
+async def generate_tailored_resume(
+    file: UploadFile = File(...),
+    job_description: str = Form(...),
+    mode: str = Form("ATS Optimized")
+):
+    if not file.filename.lower().endswith(".pdf"):
+        return {"error": "Only PDF files are supported right now"}
+
+    contents = await file.read()
+    resume_text = extract_pdf_text(contents)
+
+    prompt = f"""
+Create a complete ATS-tailored resume based on the original resume and job description.
+
+Important rules:
+- Do not invent fake companies.
+- Do not invent fake degrees.
+- Do not invent fake dates.
+- Do not claim expert-level skills unless clearly supported.
+- You may add truthful related keywords naturally where the resume supports them.
+- If a keyword is not strongly supported, phrase it carefully as exposure/familiarity when appropriate.
+- Make the resume strong, ATS-friendly, and recruiter-readable.
+- Mode: {mode}
+
+Return ONLY valid JSON with this exact structure:
+{{
+  "name": "string",
+  "contact": "string",
+  "target_title": "string",
+  "professional_summary": "string",
+  "skills": ["string"],
+  "experience": [
+    {{
+      "title": "string",
+      "company": "string",
+      "location": "string",
+      "dates": "string",
+      "bullets": ["string"]
+    }}
+  ],
+  "projects": [
+    {{
+      "name": "string",
+      "bullets": ["string"]
+    }}
+  ],
+  "education": ["string"],
+  "certifications": ["string"],
+  "change_explanation": ["string"]
+}}
+
+Original Resume:
+{resume_text[:8000]}
+
+Job Description:
+{job_description[:5000]}
+"""
+
+    try:
+        tailored = call_openai_json(
+            prompt,
+            "You are an expert ATS resume writer. You create truthful, job-targeted resumes.",
+            temperature=0.3,
+        )
+
+        doc = Document()
+
+        doc.add_heading(tailored.get("name", "Tailored Resume"), level=0)
+
+        if tailored.get("contact"):
+            doc.add_paragraph(tailored["contact"])
+
+        if tailored.get("target_title"):
+            doc.add_heading(tailored["target_title"], level=1)
+
+        doc.add_heading("Professional Summary", level=1)
+        doc.add_paragraph(tailored.get("professional_summary", ""))
+
+        doc.add_heading("Technical Skills", level=1)
+        skills = tailored.get("skills", [])
+        if skills:
+            doc.add_paragraph(", ".join(skills))
+
+        doc.add_heading("Professional Experience", level=1)
+        for exp in tailored.get("experience", []):
+            title_line = f"{exp.get('title', '')} | {exp.get('company', '')}"
+            doc.add_heading(title_line.strip(" | "), level=2)
+
+            meta = " | ".join(
+                item for item in [
+                    exp.get("location", ""),
+                    exp.get("dates", "")
+                ] if item
+            )
+            if meta:
+                doc.add_paragraph(meta)
+
+            for bullet in exp.get("bullets", []):
+                doc.add_paragraph(bullet, style="List Bullet")
+
+        projects = tailored.get("projects", [])
+        if projects:
+            doc.add_heading("Projects", level=1)
+            for project in projects:
+                doc.add_heading(project.get("name", "Project"), level=2)
+                for bullet in project.get("bullets", []):
+                    doc.add_paragraph(bullet, style="List Bullet")
+
+        education = tailored.get("education", [])
+        if education:
+            doc.add_heading("Education", level=1)
+            for item in education:
+                doc.add_paragraph(item, style="List Bullet")
+
+        certifications = tailored.get("certifications", [])
+        if certifications:
+            doc.add_heading("Certifications", level=1)
+            for item in certifications:
+                doc.add_paragraph(item, style="List Bullet")
+
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        file_stream.seek(0)
+
+        return StreamingResponse(
+            file_stream,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": "attachment; filename=ATS_Tailored_Resume.docx"
+            }
+        )
+
+    except Exception as e:
+        return {"error": str(e)}
+    

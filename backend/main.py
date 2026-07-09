@@ -5,6 +5,7 @@ from pypdf import PdfReader
 from dotenv import load_dotenv
 from openai import OpenAI
 from docx import Document
+import docx2txt
 import io
 import os
 import json
@@ -29,12 +30,28 @@ app.add_middleware(
 )
 
 
-def extract_pdf_text(file_bytes):
-    pdf_reader = PdfReader(io.BytesIO(file_bytes))
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() or ""
-    return text
+def extract_resume_text(file_bytes, filename):
+    filename = filename.lower()
+
+    if filename.endswith(".pdf"):
+        pdf_reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() or ""
+        return text
+
+    if filename.endswith(".docx"):
+        temp_file = "temp_resume.docx"
+
+        with open(temp_file, "wb") as f:
+            f.write(file_bytes)
+
+        text = docx2txt.process(temp_file)
+        os.remove(temp_file)
+
+        return text
+
+    raise Exception("Only PDF and DOCX files are supported right now")
 
 
 def call_openai_json(prompt, system_message, temperature=0.3):
@@ -61,13 +78,11 @@ async def analyze_resume(
     file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Only PDF files are supported right now"}
+    try:
+        contents = await file.read()
+        resume_text = extract_resume_text(contents, file.filename)
 
-    contents = await file.read()
-    resume_text = extract_pdf_text(contents)
-
-    prompt = f"""
+        prompt = f"""
 Analyze this resume against the job description.
 
 Return ONLY valid JSON with these fields:
@@ -87,7 +102,6 @@ Job Description:
 {job_description[:4000]}
 """
 
-    try:
         ai_result = call_openai_json(
             prompt,
             "You are an expert ATS resume analyst.",
@@ -109,13 +123,11 @@ async def generate_cover_letter(
     file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Only PDF files are supported right now"}
+    try:
+        contents = await file.read()
+        resume_text = extract_resume_text(contents, file.filename)
 
-    contents = await file.read()
-    resume_text = extract_pdf_text(contents)
-
-    prompt = f"""
+        prompt = f"""
 Write a professional, concise cover letter for this job.
 
 Rules:
@@ -132,7 +144,6 @@ Job Description:
 {job_description[:4000]}
 """
 
-    try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
@@ -156,13 +167,11 @@ async def rewrite_resume(
     file: UploadFile = File(...),
     job_description: str = Form(...)
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Only PDF files are supported right now"}
+    try:
+        contents = await file.read()
+        resume_text = extract_resume_text(contents, file.filename)
 
-    contents = await file.read()
-    resume_text = extract_pdf_text(contents)
-
-    prompt = f"""
+        prompt = f"""
 Rewrite and optimize this resume for the job description.
 
 Rules:
@@ -188,7 +197,6 @@ Job Description:
 {job_description[:4000]}
 """
 
-    try:
         rewrite_result = call_openai_json(
             prompt,
             "You are an expert resume writer and ATS optimization specialist.",
@@ -210,13 +218,11 @@ async def generate_tailored_resume(
     job_description: str = Form(...),
     mode: str = Form("ATS Optimized")
 ):
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Only PDF files are supported right now"}
+    try:
+        contents = await file.read()
+        resume_text = extract_resume_text(contents, file.filename)
 
-    contents = await file.read()
-    resume_text = extract_pdf_text(contents)
-
-    prompt = f"""
+        prompt = f"""
 Create a complete ATS-tailored resume based on the original resume and job description.
 
 Important rules:
@@ -252,8 +258,7 @@ Return ONLY valid JSON with this exact structure:
     }}
   ],
   "education": ["string"],
-  "certifications": ["string"],
-  "change_explanation": ["string"]
+  "certifications": ["string"]
 }}
 
 Original Resume:
@@ -263,7 +268,6 @@ Job Description:
 {job_description[:5000]}
 """
 
-    try:
         tailored = call_openai_json(
             prompt,
             "You are an expert ATS resume writer. You create truthful, job-targeted resumes.",
@@ -299,6 +303,7 @@ Job Description:
                     exp.get("dates", "")
                 ] if item
             )
+
             if meta:
                 doc.add_paragraph(meta)
 
@@ -339,4 +344,3 @@ Job Description:
 
     except Exception as e:
         return {"error": str(e)}
-    

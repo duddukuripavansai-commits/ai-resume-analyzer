@@ -1,3 +1,6 @@
+import DashboardPage from "./pages/DashboardPage";
+import { supabase } from "./services/supabase";
+import AuthPage from "./pages/AuthPage";
 import { useState } from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
@@ -14,6 +17,10 @@ export default function App() {
   const [coverLoading, setCoverLoading] = useState(false);
   const [rewriteLoading, setRewriteLoading] = useState(false);
   const [tailoredLoading, setTailoredLoading] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [user, setUser] = useState(
+  JSON.parse(localStorage.getItem("user")) || null
+);
 
   const buildFormData = () => {
     const formData = new FormData();
@@ -45,6 +52,21 @@ export default function App() {
         buildFormData()
       );
       setResult(response.data);
+
+      if (!response.data.error && user) {
+  await supabase.from("resume_history").insert([
+    {
+      user_id: user.id,
+      resume_name: file.name,
+      job_description: jobDescription,
+      match_score: response.data.match_score,
+      overall_summary: response.data.overall_summary,
+      strong_matches: response.data.strong_matches,
+      missing_skills: response.data.missing_skills,
+      resume_improvements: response.data.resume_improvements,
+    },
+  ]);
+}
     } catch (error) {
       setResult({ error: "Backend error while analyzing resume." });
     } finally {
@@ -161,13 +183,47 @@ export default function App() {
     doc.save("AI_Resume_Analysis_Report.pdf");
   };
 
+  if (!user) {
+  return (
+    <AuthPage
+      onLogin={(loggedInUser) => {
+        localStorage.setItem("user", JSON.stringify(loggedInUser));
+        setUser(loggedInUser);
+      }}
+    />
+  );
+}
+if (showDashboard) {
+  return (
+    <DashboardPage
+      user={user}
+      onBack={() => setShowDashboard(false)}
+    />
+  );
+}
   return (
     <div className="min-h-screen bg-gray-100 p-10">
       <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-lg p-8">
         <h1 className="text-4xl font-bold text-center mb-8">
           🤖 AI Resume Analyzer
         </h1>
-
+<div className="flex justify-end mb-6">
+  <button
+    onClick={() => setShowDashboard(true)}
+    className="bg-gray-800 text-white px-5 py-2 rounded-lg hover:bg-gray-900"
+  >
+    📂 View History
+  </button>
+  <button
+  onClick={() => {
+    localStorage.removeItem("user");
+    setUser(null);
+  }}
+  className="bg-red-600 text-white px-5 py-2 rounded-lg hover:bg-red-700 ml-3"
+>
+  Logout
+</button>
+</div>
         <label className="font-semibold">Upload Resume (PDF)</label>
         <input
           className="border w-full mt-2 p-3 rounded-lg mb-5"
